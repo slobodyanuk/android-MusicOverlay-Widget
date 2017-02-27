@@ -3,4 +3,12 @@
     <color name="colorPrimary">#3F51B5</color>
     <color name="colorPrimaryDark">#303F9F</color>
     <color name="colorAccent">#FF4081</color>
+
+    <color name="widget_dark">#e36a97</color>
+    <color name="widget_light">#f0979b</color>
+    <color name="widget_expanded">#bc428b</color>
+    <color name="widget_progress">#bc428b</color>
+    <color name="widget_shadow">#50000000</color>
+    <color name="widget_cross_default">#f0979b</color>
+    <color name="widget_cross_overlapped">#e36a97</color>
 </resources>
