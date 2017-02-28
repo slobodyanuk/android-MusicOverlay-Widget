@@ -1,16 +1,20 @@
 package com.musicoverlaywidget;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.animation.ValueAnimator;
 import android.content.Context;
+import android.graphics.PixelFormat;
 import android.graphics.Point;
 import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
-import com.musicoverlaywidget.controllers.PlaybackState;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Vibrator;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.v4.content.ContextCompat;
+import android.view.Gravity;
 import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.View;
@@ -20,8 +24,13 @@ import android.view.animation.AccelerateDecelerateInterpolator;
 import com.musicoverlaywidget.controllers.Controller;
 import com.musicoverlaywidget.controllers.OnControlsClickListener;
 import com.musicoverlaywidget.controllers.OnWidgetStateChangedListener;
+import com.musicoverlaywidget.controllers.PlaybackState;
 import com.musicoverlaywidget.controllers.State;
 import com.musicoverlaywidget.managers.TouchManager;
+import com.musicoverlaywidget.utils.DrawableUtils;
+import com.musicoverlaywidget.views.ExpandCollapseWidget;
+import com.musicoverlaywidget.views.PlayPauseButton;
+import com.musicoverlaywidget.views.RemoveWidgetView;
 import com.thefinestartist.utils.ui.DisplayUtil;
 
 import java.util.Random;
@@ -37,11 +46,7 @@ public class PlayerWidget {
     private final PlayPauseButton playPauseButton;
     private final ExpandCollapseWidget expandCollapseWidget;
     private final RemoveWidgetView removeWidgetView;
-
-    private PlaybackState playbackState;
-
     private final Controller controller;
-
     private final WindowManager windowManager;
     private final Vibrator vibrator;
     private final Handler handler;
@@ -51,19 +56,17 @@ public class PlayerWidget {
     private final TouchManager expandedWidgetManager;
     private final TouchManager.BoundsChecker ppbToExpBoundsChecker;
     private final TouchManager.BoundsChecker expToPpbBoundsChecker;
-
     private final RectF removeBounds;
     private final Point visibleRemWidPos;
+    private final OnControlsClickListenerWrapper onControlsClickListener;
+    private final Point hiddenRemWidPos;
+    private PlaybackState playbackState;
     private int animatedRemBtnYPos = -1;
     private float widgetWidth, widgetHeight, radius;
-    private final OnControlsClickListenerWrapper onControlsClickListener;
     private boolean shown;
     private boolean released;
     private boolean removeWidgetShown;
     private OnWidgetStateChangedListener onWidgetStateChangedListener;
-
-    private final Point hiddenRemWidPos;
-
 
 
     public PlayerWidget(@NonNull WidgetBuilder builder) {
@@ -213,16 +216,18 @@ public class PlayerWidget {
         widgetWidth = context.getResources().getDimensionPixelSize(R.dimen.widget_player_width);
         radius = widgetHeight / 2f;
         playbackState = new PlaybackState();
-        return new Configuration.Builder()
-                .setContext(context)
+
+        Configuration.Builder configBuilder = Configuration.Builder
+                .builder()
+                .context(context)
                 .playbackState(playbackState)
                 .random(new Random())
                 .accDecInterpolator(new AccelerateDecelerateInterpolator())
                 .darkColor(darkColor)
-                .playColor(lightColor)
+                .lightColor(lightColor)
                 .progressColor(progressColor)
                 .expandedColor(expandColor)
-                .widgetWidth(widgetWidth)
+                .width(widgetWidth)
                 .radius(radius)
                 .playlistDrawable(playlistDrawable)
                 .playDrawable(playDrawable)
@@ -242,77 +247,152 @@ public class PlayerWidget {
                 .crossColor(crossColor)
                 .crossOverlappedColor(crossOverlappedColor)
                 .build();
+
+        return configBuilder.build();
     }
 
-    public void show(int cx, int cy){
-
+    private void show(View view, int left, int top) {
+        WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_PHONE,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                        | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT);
+        params.gravity = Gravity.START | Gravity.TOP;
+        params.x = left;
+        params.y = top;
+        windowManager.addView(view, params);
     }
 
+    public void show(int cx, int cy) {
+        if (shown) {
+            return;
+        }
+        shown = true;
+        float remWidX = screenSize.x / 2f - radius * RemoveWidgetView.SCALE_LARGE;
+        hiddenRemWidPos.set((int)remWidX, (int) (screenSize.y + widgetHeight + navigationBarHeight()));
+        visibleRemWidPos.set((int)remWidX, (int) (screenSize.y - radius - (hasNavigationBar() ? 0 : widgetHeight)));
+        try {
+            show(removeWidgetView, hiddenRemWidPos.x, hiddenRemWidPos.y);
+        } catch (IllegalArgumentException e) {
+            // widget not removed yet, animation in progress
+        }
+        show(playPauseButton, (int) (cx - widgetHeight), (int) (cy - widgetHeight));
+        playPauseButtonManager.animateToBounds();
+    }
+
+    /**
+     * Hide widget.
+     */
     public void hide() {
-
+        hideInternal(true);
     }
+
+    private void hideInternal(boolean byPublic) {
+        if (!shown) {
+            return;
+        }
+        shown = false;
+        released = true;
+        try {
+            windowManager.removeView(playPauseButton);
+        } catch (IllegalArgumentException e) {
+            // view not attached to window
+        }
+        if (byPublic) {
+            try {
+                windowManager.removeView(removeWidgetView);
+            } catch (IllegalArgumentException e) {
+                // view not attached to window
+            }
+        }
+        try {
+            windowManager.removeView(expandCollapseWidget);
+        } catch (IllegalArgumentException e) {
+            // widget not added to window yet
+        }
+        if (onWidgetStateChangedListener != null) {
+            onWidgetStateChangedListener.onWidgetStateChanged(State.REMOVED);
+        }
+    }
+
 
     public void expand() {
+        removeWidgetShown = false;
+        playPauseButton.enableProgressChanges(false);
+        playPauseButton.postDelayed(this::checkSpaceAndShowExpanded, PlayPauseButton.PROGRESS_CHANGES_DURATION);
     }
 
     public void collapse() {
+        expandCollapseWidget.setCollapseListener(playPauseButton::setAlpha);
+
+        WindowManager.LayoutParams params = (WindowManager.LayoutParams) expandCollapseWidget.getLayoutParams();
+        int cx = params.x + expandCollapseWidget.getWidth() / 2;
+        if(cx > screenSize.x / 2) {
+            expandCollapseWidget.expandDirection(ExpandCollapseWidget.DIRECTION_LEFT);
+        } else {
+            expandCollapseWidget.expandDirection(ExpandCollapseWidget.DIRECTION_RIGHT);
+        }
+        updatePlayPauseButtonPosition();
+        if (expandCollapseWidget.collapse()) {
+            playPauseButtonManager.animateToBounds();
+            expandedWidgetManager.animateToBounds(expToPpbBoundsChecker, null);
+        }
     }
 
+    private void checkSpaceAndShowExpanded() {
+        WindowManager.LayoutParams params = (WindowManager.LayoutParams) playPauseButton.getLayoutParams();
+        int x = params.x;
+        int y = params.y;
+        int expandDirection;
+        if (x + widgetHeight > screenSize.x / 2) {
+            expandDirection = ExpandCollapseWidget.DIRECTION_LEFT;
+        } else {
+            expandDirection = ExpandCollapseWidget.DIRECTION_RIGHT;
+        }
+
+        playPauseButtonManager.animateToBounds(ppbToExpBoundsChecker, () -> {
+            WindowManager.LayoutParams params1 = (WindowManager.LayoutParams) playPauseButton.getLayoutParams();
+            int x1 = params1.x;
+            int y1 = params1.y;
+            if (expandDirection == ExpandCollapseWidget.DIRECTION_LEFT) {
+                x1 -= widgetWidth - widgetHeight * 1.5f;
+            } else {
+                x1 += widgetHeight / 2f;
+            }
+            show(expandCollapseWidget, x1, y1);
+            playPauseButton.setLayerType(View.LAYER_TYPE_NONE, null);
+
+            expandCollapseWidget.setExpandListener(percent -> playPauseButton.setAlpha(1f - percent));
+            expandCollapseWidget.expand(expandDirection);
+        });
+    }
 
     private void updatePlayPauseButtonPosition() {
-
+        WindowManager.LayoutParams widgetParams = (WindowManager.LayoutParams) expandCollapseWidget.getLayoutParams();
+        WindowManager.LayoutParams params = (WindowManager.LayoutParams) playPauseButton.getLayoutParams();
+        if (expandCollapseWidget.expandDirection() == ExpandCollapseWidget.DIRECTION_RIGHT) {
+            params.x = (int) (widgetParams.x - radius);
+        } else {
+            params.x = (int) (widgetParams.x + widgetWidth - widgetHeight - radius);
+        }
+        params.y = widgetParams.y;
+        try {
+            windowManager.updateViewLayout(playPauseButton, params);
+        } catch (IllegalArgumentException e) {
+            // view not attached to window
+        }
+        if (onWidgetStateChangedListener != null) {
+            onWidgetStateChangedListener.onWidgetPositionChanged((int) (params.x + widgetHeight), (int) (params.y + widgetHeight));
+        }
     }
 
     @NonNull
     public Controller controller() {
         return controller;
-    }
-
-    private class OnControlsClickListenerWrapper implements OnControlsClickListener {
-
-        private OnControlsClickListener onControlsClickListener;
-
-        public OnControlsClickListenerWrapper onControlsClickListener(OnControlsClickListener inner) {
-            this.onControlsClickListener = inner;
-            return this;
-        }
-
-        @Override
-        public boolean onPlaylistClicked() {
-            if (onControlsClickListener == null || !onControlsClickListener.onPlaylistClicked()) {
-                collapse();
-                return true;
-            }
-            return false;
-        }
-
-        @Override
-        public void onPreviousClicked() {
-            if (onControlsClickListener != null) {
-                onControlsClickListener.onPreviousClicked();
-            }
-        }
-
-        @Override
-        public boolean onPlayPauseClicked() {
-            if (onControlsClickListener == null || !onControlsClickListener.onPlayPauseClicked()) {
-                if (playbackState.state() != Configuration.STATE_PLAYING) {
-                    playbackState.start(AudioWidget.this);
-                } else {
-                    playbackState.pause(AudioWidget.this);
-                }
-                return true;
-            }
-            return false;
-        }
-
-        @Override
-        public void onNextClicked() {
-            if (onControlsClickListener != null) {
-                onControlsClickListener.onNextClicked();
-            }
-        }
-
     }
 
     @NonNull
@@ -373,7 +453,6 @@ public class PlayerWidget {
         return !hasBackKey && !hasHomeKey || id > 0 && context.getResources().getBoolean(id);
     }
 
-
     private int navigationBarHeight() {
         if (hasNavigationBar()) {
             int resourceId = context.getResources().getIdentifier("navigation_bar_height", "dimen", "android");
@@ -385,5 +464,231 @@ public class PlayerWidget {
         return 0;
     }
 
+    private class OnControlsClickListenerWrapper implements OnControlsClickListener {
+
+        private OnControlsClickListener onControlsClickListener;
+
+        public OnControlsClickListenerWrapper onControlsClickListener(OnControlsClickListener inner) {
+            this.onControlsClickListener = inner;
+            return this;
+        }
+
+        @Override
+        public boolean onPlaylistClicked() {
+            if (onControlsClickListener == null || !onControlsClickListener.onPlaylistClicked()) {
+                collapse();
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        public void onPreviousClicked() {
+            if (onControlsClickListener != null) {
+                onControlsClickListener.onPreviousClicked();
+            }
+        }
+
+        @Override
+        public boolean onPlayPauseClicked() {
+            if (onControlsClickListener == null || !onControlsClickListener.onPlayPauseClicked()) {
+                if (playbackState.state() != Configuration.STATE_PLAYING) {
+                    playbackState.start(PlayerWidget.this);
+                } else {
+                    playbackState.pause(PlayerWidget.this);
+                }
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        public void onNextClicked() {
+            if (onControlsClickListener != null) {
+                onControlsClickListener.onNextClicked();
+            }
+        }
+
+    }
+
+    private class PlayPauseButtonCallback extends TouchManager.SimpleCallback {
+
+        private static final long REMOVE_BTN_ANIM_DURATION = 200;
+        private final ValueAnimator.AnimatorUpdateListener animatorUpdateListener;
+        private boolean readyToRemove;
+
+        PlayPauseButtonCallback() {
+            animatorUpdateListener = animation -> {
+                if (!removeWidgetShown) {
+                    return;
+                }
+                animatedRemBtnYPos = (int)((float) animation.getAnimatedValue());
+                updateRemoveBtnPosition();
+            };
+        }
+
+        @Override
+        public void onClick(float x, float y) {
+            playPauseButton.onClick();
+            if (onControlsClickListener != null) {
+                onControlsClickListener.onPlayPauseClicked();
+            }
+        }
+
+        @Override
+        public void onTouched(float x, float y) {
+            super.onTouched(x, y);
+            released = false;
+            handler.postDelayed(() -> {
+                if (!released) {
+                    removeWidgetShown = true;
+                    ValueAnimator animator = ValueAnimator.ofFloat(hiddenRemWidPos.y, visibleRemWidPos.y);
+                    animator.setDuration(REMOVE_BTN_ANIM_DURATION);
+                    animator.addUpdateListener(animatorUpdateListener);
+                    animator.start();
+                }
+            }, Configuration.LONG_CLICK_THRESHOLD);
+            playPauseButton.onTouchDown();
+        }
+
+        @Override
+        public void onMoved(float diffX, float diffY) {
+            super.onMoved(diffX, diffY);
+            boolean curReadyToRemove = isReadyToRemove();
+            if (curReadyToRemove != readyToRemove) {
+                readyToRemove = curReadyToRemove;
+                removeWidgetView.setOverlapped(readyToRemove);
+                if (readyToRemove && vibrator.hasVibrator()) {
+                    vibrator.vibrate(VIBRATION_DURATION);
+                }
+            }
+            updateRemoveBtnPosition();
+        }
+
+        private void updateRemoveBtnPosition() {
+            if(removeWidgetShown) {
+                WindowManager.LayoutParams playPauseBtnParams = (WindowManager.LayoutParams) playPauseButton.getLayoutParams();
+                WindowManager.LayoutParams removeBtnParams = (WindowManager.LayoutParams) removeWidgetView.getLayoutParams();
+
+                double tgAlpha = (screenSize.x / 2. - playPauseBtnParams.x) / (visibleRemWidPos.y - playPauseBtnParams.y);
+                double rotationDegrees = 360 - Math.toDegrees(Math.atan(tgAlpha));
+
+                float distance = (float) Math.sqrt(Math.pow(animatedRemBtnYPos - playPauseBtnParams.y, 2) +
+                        Math.pow(visibleRemWidPos.x - hiddenRemWidPos.x, 2));
+                float maxDistance = (float) Math.sqrt(Math.pow(screenSize.x, 2) + Math.pow(screenSize.y, 2));
+                distance /= maxDistance;
+
+                if (animatedRemBtnYPos == -1) {
+                    animatedRemBtnYPos = visibleRemWidPos.y;
+                }
+
+                removeBtnParams.x = (int) DrawableUtils.rotateX(
+                        visibleRemWidPos.x, animatedRemBtnYPos - radius * distance,
+                        hiddenRemWidPos.x, animatedRemBtnYPos, (float) rotationDegrees);
+                removeBtnParams.y = (int) DrawableUtils.rotateY(
+                        visibleRemWidPos.x, animatedRemBtnYPos - radius * distance,
+                        hiddenRemWidPos.x, animatedRemBtnYPos, (float) rotationDegrees);
+
+                try {
+                    windowManager.updateViewLayout(removeWidgetView, removeBtnParams);
+                } catch (IllegalArgumentException e) {
+                    // view not attached to window
+                }
+            }
+        }
+
+        @Override
+        public void onReleased(float x, float y) {
+            super.onReleased(x, y);
+            playPauseButton.onTouchUp();
+            released = true;
+            if (removeWidgetShown) {
+                ValueAnimator animator = ValueAnimator.ofFloat(visibleRemWidPos.y, hiddenRemWidPos.y);
+                animator.setDuration(REMOVE_BTN_ANIM_DURATION);
+                animator.addUpdateListener(animatorUpdateListener);
+                animator.addListener(new AnimatorListenerAdapter() {
+
+                    @Override
+                    public void onAnimationEnd(Animator animation) {
+                        removeWidgetShown = false;
+                        if (!shown) {
+                            try {
+                                windowManager.removeView(removeWidgetView);
+                            } catch (IllegalArgumentException e) {
+                                // view not attached to window
+                            }
+                        }
+                    }
+                });
+                animator.start();
+            }
+            if (isReadyToRemove()) {
+                hideInternal(false);
+            } else {
+                if (onWidgetStateChangedListener != null) {
+                    WindowManager.LayoutParams params = (WindowManager.LayoutParams) playPauseButton.getLayoutParams();
+                    onWidgetStateChangedListener.onWidgetPositionChanged((int) (params.x + widgetHeight), (int) (params.y + widgetHeight));
+                }
+            }
+        }
+
+        @Override
+        public void onAnimationCompleted() {
+            super.onAnimationCompleted();
+            if (onWidgetStateChangedListener != null) {
+                WindowManager.LayoutParams params = (WindowManager.LayoutParams) playPauseButton.getLayoutParams();
+                onWidgetStateChangedListener.onWidgetPositionChanged((int) (params.x + widgetHeight), (int) (params.y + widgetHeight));
+            }
+        }
+
+        private boolean isReadyToRemove() {
+            WindowManager.LayoutParams removeParams = (WindowManager.LayoutParams) removeWidgetView.getLayoutParams();
+            removeBounds.set(removeParams.x, removeParams.y, removeParams.x + widgetHeight, removeParams.y + widgetHeight);
+            WindowManager.LayoutParams params = (WindowManager.LayoutParams) playPauseButton.getLayoutParams();
+            float cx = params.x + widgetHeight;
+            float cy = params.y + widgetHeight;
+            return removeBounds.contains(cx, cy);
+        }
+    }
+
+    private class ExpandCollapseWidgetCallback extends TouchManager.SimpleCallback {
+
+        @Override
+        public void onTouched(float x, float y) {
+            super.onTouched(x, y);
+            expandCollapseWidget.onTouched(x, y);
+        }
+
+        @Override
+        public void onReleased(float x, float y) {
+            super.onReleased(x, y);
+            expandCollapseWidget.onReleased(x, y);
+        }
+
+        @Override
+        public void onClick(float x, float y) {
+            super.onClick(x, y);
+            expandCollapseWidget.onClick(x, y);
+        }
+
+        @Override
+        public void onTouchOutside() {
+            if(!expandCollapseWidget.isAnimationInProgress()) {
+                collapse();
+            }
+        }
+
+        @Override
+        public void onMoved(float diffX, float diffY) {
+            super.onMoved(diffX, diffY);
+            updatePlayPauseButtonPosition();
+        }
+
+        @Override
+        public void onAnimationCompleted() {
+            super.onAnimationCompleted();
+            updatePlayPauseButtonPosition();
+        }
+    }
 
 }

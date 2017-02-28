@@ -23,7 +23,7 @@ public class PlaybackState {
 		stateListeners = new HashSet<>();
 	}
 
-	boolean addPlaybackStateListener(@NonNull PlaybackStateListener playbackStateListener) {
+	public boolean addPlaybackStateListener(@NonNull PlaybackStateListener playbackStateListener) {
 		return stateListeners.add(playbackStateListener);
 	}
 
@@ -58,11 +58,11 @@ public class PlaybackState {
 		state(Configuration.STATE_PLAYING, initiator);
 	}
 
-	void pause(Object initiator) {
+	public void pause(Object initiator) {
 		state(Configuration.STATE_PAUSED, initiator);
 	}
 
-	void stop(Object initiator) {
+	public void stop(Object initiator) {
 		state(Configuration.STATE_STOPPED, initiator);
 		position(0);
 	}
@@ -84,7 +84,7 @@ public class PlaybackState {
 		}
 	}
 
-	interface PlaybackStateListener {
+	public interface PlaybackStateListener {
 
 		void onStateChanged(int oldState, int newState, Object initiator);
 

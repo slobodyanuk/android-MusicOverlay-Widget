@@ -1,6 +1,6 @@
 package com.musicoverlaywidget.managers;
 
-abstract class BoundsCheckerWithOffset implements TouchManager.BoundsChecker {
+public abstract class BoundsCheckerWithOffset implements TouchManager.BoundsChecker {
 
         private int offsetX, offsetY;
 

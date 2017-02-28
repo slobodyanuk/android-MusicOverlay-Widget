@@ -2,17 +2,14 @@ package com.musicoverlaywidget;
 
 import android.content.Context;
 import android.graphics.drawable.Drawable;
-import android.media.session.PlaybackState;
 import android.support.annotation.ColorInt;
-import android.support.annotation.Nullable;
 import android.view.ViewConfiguration;
 import android.view.animation.Interpolator;
 
+import com.musicoverlaywidget.controllers.PlaybackState;
+
 import java.util.Random;
 
-import lombok.Builder;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
 import lombok.ToString;
 
 /**
@@ -206,7 +203,6 @@ public class Configuration {
 
     @lombok.Builder
     @ToString
-    @Setter
     public static class Builder {
 
         private int lightColor;

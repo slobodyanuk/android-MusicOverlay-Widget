@@ -5,10 +5,9 @@ import android.graphics.drawable.Drawable;
 import android.support.annotation.ColorInt;
 
 import lombok.Getter;
-import lombok.NonNull;
 import lombok.ToString;
 
-@lombok.Builder
+@lombok.Builder()
 @ToString
 @Getter
 public class WidgetBuilder {
@@ -72,9 +71,9 @@ public class WidgetBuilder {
     private boolean edgeOffsetXExpandedSet;
     private boolean edgeOffsetYExpandedSet;
 
-    public WidgetBuilder(@NonNull Context context) {
-        this.context = context;
-    }
+//    public WidgetBuilder(@NonNull Context context) {
+//        this.context = context;
+//    }
 
     public PlayerWidget build() {
         if (buttonPaddingSet) {
