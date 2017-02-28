@@ -1,11 +1,10 @@
 package com.musicoverlaywidget;
 
 import android.content.Context;
-import android.content.res.Configuration;
 import android.graphics.Point;
 import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
-import android.media.session.PlaybackState;
+import com.musicoverlaywidget.controllers.PlaybackState;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Vibrator;
@@ -215,7 +214,7 @@ public class PlayerWidget {
         radius = widgetHeight / 2f;
         playbackState = new PlaybackState();
         return new Configuration.Builder()
-                .context(context)
+                .setContext(context)
                 .playbackState(playbackState)
                 .random(new Random())
                 .accDecInterpolator(new AccelerateDecelerateInterpolator())
